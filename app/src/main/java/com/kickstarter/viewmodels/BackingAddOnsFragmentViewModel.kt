@@ -135,10 +135,21 @@ class BackingAddOnsFragmentViewModel {
                     .filter { ObjectUtils.isNotNull(it) }
                     .map { requireNotNull(it) }
 
+            val isSameReward = rewardPledge
+                    .compose<Pair<Reward, Reward>>(combineLatestPair(backingReward))
+                    .map { it.first.id() == it.second.id() }
+
             val reward = Observable.merge(rewardPledge, backingReward)
 
             projectAndReward = project
                     .compose<Pair<Project, Reward>>(combineLatestPair(reward))
+
+            isSameReward
+                    .filter { !it }
+                    .compose(bindToLifecycle())
+                    .subscribe {
+                        this.currentSelection.clear()
+                    }
 
             val backingShippingRule = backing
                     .compose<Pair<Backing, List<ShippingRule>>>(combineLatestPair(shippingRules))
@@ -166,6 +177,9 @@ class BackingAddOnsFragmentViewModel {
                     }
 
             val addOnsFromBacking = backing
+                    .compose<Pair<Backing, Boolean>>(combineLatestPair(isSameReward))
+                    .filter { it.second }
+                    .map { it.first }
                     .map { it.addOns()?.toList() }
                     .filter { ObjectUtils.isNotNull(it) }
                     .map { requireNotNull(it) }
@@ -183,8 +197,7 @@ class BackingAddOnsFragmentViewModel {
 
             shippingRules
                     .filter { it.isNotEmpty() }
-                    .compose<Pair<List<ShippingRule>, PledgeReason>>(combineLatestPair(pledgeReason))
-                    .switchMap { defaultShippingRule(it.first) }
+                    .switchMap { defaultShippingRule(it) }
                     .subscribe(this.shippingRuleSelected)
 
             Observable
@@ -213,8 +226,8 @@ class BackingAddOnsFragmentViewModel {
                     }
                     .subscribe(addOnsFromGraph)
 
-            val filteredAddOns = Observable.combineLatest(addonsList, projectData, this.shippingRuleSelected, reward, this.totalSelectedAddOns) { list, pData, rule, rw,
-                                                                                                                                                  _ ->
+            val filteredAddOns = Observable.combineLatest(addonsList, projectData, this.shippingRuleSelected, reward, this.totalSelectedAddOns) {
+                list, pData, rule, rw, _ ->
                 return@combineLatest filterByLocationAndUpdateQuantity(list, pData, rule, rw)
             }
                     .distinctUntilChanged()
