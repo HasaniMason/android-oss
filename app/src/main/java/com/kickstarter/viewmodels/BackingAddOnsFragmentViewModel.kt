@@ -246,8 +246,9 @@ class BackingAddOnsFragmentViewModel {
                     }
 
             // - this.quantityPerId.startWith(Pair(-1,-1L) because we need to trigger this validation everytime the AddOns selection changes
-            val isButtonEnabled = Observable.combineLatest(backingShippingRule, addOnsFromBacking, this.shippingRuleSelected, this.quantityPerId.startWith(Pair(-1, -1L))) { backedRule, backedList, actualRule, _ ->
-                return@combineLatest isDifferentLocation(backedRule, actualRule) || isDifferentSelection(backedList)
+            val isButtonEnabled = Observable.combineLatest(backingShippingRule, addOnsFromBacking, this.shippingRuleSelected, this.quantityPerId.startWith(Pair(-1, -1L)), pledgeReason) {
+                backedRule, backedList, actualRule, _ , pReason ->
+                return@combineLatest isDifferentLocation(backedRule, actualRule) || isDifferentSelection(backedList, pReason)
             }
                     .distinctUntilChanged()
 
@@ -292,14 +293,36 @@ class BackingAddOnsFragmentViewModel {
                     }
         }
 
-        private fun isDifferentSelection(backedList: List<Reward>): Boolean {
+        private fun isDifferentSelection(backedList: List<Reward>, pReason: PledgeReason): Boolean {
+            if (pReason != PledgeReason.UPDATE_REWARD) return true
+
             val backedSelection: MutableMap<Long, Int> = mutableMapOf()
             backedList
                     .map {
                         backedSelection.put(it.id(), it.quantity() ?: 0)
                     }
 
-            return backedSelection != this.currentSelection
+            var sameBackedSelectionPerItem = mutableListOf<Boolean>()
+            var newItemSelected = mutableListOf<Boolean>()
+
+            this.currentSelection.forEach { item ->
+                if (backedSelection.containsKey(item.key))
+                    sameBackedSelectionPerItem.add(item.value == backedSelection[item.key])
+
+                if (!backedSelection.containsKey(item.key))
+                    newItemSelected.add(item.value > 0)
+            }
+
+            // - All backed item remains with the same selection
+            val sameBackedSelection = sameBackedSelectionPerItem.firstOrNull { !it } ?: true
+
+            // - No new selected items
+            val someNewItemSelected = newItemSelected.firstOrNull { it } ?: false
+
+            // - No new updates on backed elements and no new items selected
+            val backedOriginalState = sameBackedSelection && !someNewItemSelected
+
+            return !backedOriginalState
         }
 
         private fun isDifferentLocation(backedRule: ShippingRule, actualRule: ShippingRule) =
