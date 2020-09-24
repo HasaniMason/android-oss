@@ -142,7 +142,7 @@ class BackingAddOnsFragmentViewModel {
 
             val reward = Observable.merge(rewardPledge, backingReward)
 
-            projectAndReward = project
+            this.projectAndReward = project
                     .compose<Pair<Project, Reward>>(combineLatestPair(reward))
 
             isSameReward
@@ -161,6 +161,7 @@ class BackingAddOnsFragmentViewModel {
                     }
                     .filter { ObjectUtils.isNotNull(it) }
                     .map { requireNotNull(it) }
+                    .distinctUntilChanged()
 
             backingShippingRule
                     .compose(bindToLifecycle())
@@ -170,10 +171,11 @@ class BackingAddOnsFragmentViewModel {
 
             // - In case of digital Reward to follow the same flow as the rest of use cases use and empty shippingRule
             reward
-                    .filter { isDigital(it) }
+                    .filter { isDigital(it) || !isShippable(it)}
                     .distinctUntilChanged()
                     .compose(bindToLifecycle())
                     .subscribe {
+                        this.shippingSelectorIsGone.onNext(true)
                         this.shippingRuleSelected.onNext(ShippingRuleFactory.emptyShippingRule())
                     }
 
@@ -184,6 +186,7 @@ class BackingAddOnsFragmentViewModel {
                     .map { it.addOns()?.toList() }
                     .filter { ObjectUtils.isNotNull(it) }
                     .map { requireNotNull(it) }
+                    .distinctUntilChanged()
 
             val combinedList = addOnsFromBacking
                     .compose<Pair<List<Reward>, List<Reward>>>(combineLatestPair(addOnsFromGraph))
@@ -213,10 +216,10 @@ class BackingAddOnsFragmentViewModel {
                     }
                     .switchMap { it }
                     .map { it.shippingRules() }
+                    .distinctUntilChanged()
                     .compose(bindToLifecycle())
                     .subscribe {
                         shippingRules.onNext(it)
-                        this.shippingSelectorIsGone.onNext(false)
                     }
 
             Observable
@@ -253,10 +256,6 @@ class BackingAddOnsFragmentViewModel {
                     .compose(bindToLifecycle())
                     .subscribe(this.isEmptyState)
 
-            reward
-                    .map { !isShippable(it) }
-                    .compose(bindToLifecycle())
-                    .subscribe(this.shippingSelectorIsGone)
 
             this.quantityPerId
                     .compose<Pair<Pair<Int, Long>, Triple<ProjectData, List<Reward>, ShippingRule>>>(combineLatestPair(this.addOnsListFiltered))
@@ -267,10 +266,11 @@ class BackingAddOnsFragmentViewModel {
                         this.totalSelectedAddOns.onNext(calculateTotal(it.second.second))
                     }
 
-            // - this.quantityPerId.startWith(Pair(-1,-1L) because we need to trigger this validation everytime the AddOns selection changes
-            val isButtonEnabled = Observable.combineLatest(backingShippingRule, addOnsFromBacking, this.shippingRuleSelected, this.quantityPerId.startWith(Pair(-1, -1L)), pledgeReason) {
-                backedRule, backedList, actualRule, _ , pReason ->
-                return@combineLatest isDifferentLocation(backedRule, actualRule) || isDifferentSelection(backedList, pReason)
+            // - .startWith(Pair(-1,-1L) because we need to trigger this validation every time the AddOns selection changes
+            // - .startWith(ShippingRuleFactory.emptyShippingRule()) because we need to trigger this validation every time the AddOns selection changes for digital rewards as well
+            val isButtonEnabled = Observable.combineLatest(backingShippingRule.startWith(ShippingRuleFactory.emptyShippingRule()), addOnsFromBacking, this.shippingRuleSelected, this.quantityPerId) {
+                backedRule, backedList, actualRule, _  ->
+                return@combineLatest isDifferentLocation(backedRule, actualRule) || isDifferentSelection(backedList)
             }
                     .distinctUntilChanged()
 
@@ -315,8 +315,17 @@ class BackingAddOnsFragmentViewModel {
                     }
         }
 
-        private fun isDifferentSelection(backedList: List<Reward>, pReason: PledgeReason): Boolean {
-            if (pReason != PledgeReason.UPDATE_REWARD) return true
+        /**
+         *  Extract the ID:quantity from the original baked AddOns list
+         *  in case the ID's of those addOns and the quantity are the same
+         *  as the current selected ones the selection is the same as the
+         *  backed one.
+         *
+         *  @param backedList -> addOns list from backing object
+         *  @return Boolean -> true in case different selection false otherwise
+         */
+        private fun isDifferentSelection(backedList: List<Reward>): Boolean {
+            var isDifferentSelection = false
 
             val backedSelection: MutableMap<Long, Int> = mutableMapOf()
             backedList
@@ -324,27 +333,16 @@ class BackingAddOnsFragmentViewModel {
                         backedSelection.put(it.id(), it.quantity() ?: 0)
                     }
 
-            var sameBackedSelectionPerItem = mutableListOf<Boolean>()
-            var newItemSelected = mutableListOf<Boolean>()
+            val keysSelected = this.currentSelection.keys.sorted()
+            val valuesSelected = this.currentSelection.values.sorted()
 
-            this.currentSelection.forEach { item ->
-                if (backedSelection.containsKey(item.key))
-                    sameBackedSelectionPerItem.add(item.value == backedSelection[item.key])
+            val keysBaked = backedSelection.keys.sorted()
+            val valuesBacked = backedSelection.values.sorted()
+            
+            isDifferentSelection = if ( keysBaked != keysSelected ) true
+            else valuesBacked != valuesSelected
 
-                if (!backedSelection.containsKey(item.key))
-                    newItemSelected.add(item.value > 0)
-            }
-
-            // - All backed item remains with the same selection
-            val sameBackedSelection = sameBackedSelectionPerItem.firstOrNull { !it } ?: true
-
-            // - No new selected items
-            val someNewItemSelected = newItemSelected.firstOrNull { it } ?: false
-
-            // - No new updates on backed elements and no new items selected
-            val backedOriginalState = sameBackedSelection && !someNewItemSelected
-
-            return !backedOriginalState
+            return isDifferentSelection
         }
 
         private fun isDifferentLocation(backedRule: ShippingRule, actualRule: ShippingRule) =
@@ -363,11 +361,9 @@ class BackingAddOnsFragmentViewModel {
                     }
         }
 
+        // - Return the item from the list if it has quantity
         private fun modifyOrSelect(backingList: List<Reward>, graphAddOn: Reward): Reward {
             return backingList.firstOrNull { it.id() == graphAddOn.id() }?.let {
-                val update = Pair(it.quantity() ?: 0, it.id())
-                if (update.first > 0)
-                    updateQuantityById(update)
                 return@let it
             } ?: graphAddOn
         }
