@@ -446,9 +446,9 @@ interface PledgeFragmentViewModel {
             val backing = projectData
                     .compose<Pair<ProjectData, PledgeReason>>(combineLatestPair(pledgeReason))
                     .filter { it.second != PledgeReason.PLEDGE }
-                    .map { it.first }
-                    .filter { ObjectUtils.isNotNull(it.backing()) }
-                    .map { requireNotNull(it.backing()) }
+                    .map { it.first.backing() ?: it.first.project().backing() }
+                    .filter { ObjectUtils.isNotNull(it) }
+                    .map { requireNotNull(it) }
 
             backing
                     .map { it.locationId() == null }
@@ -881,11 +881,12 @@ interface PledgeFragmentViewModel {
 
             val pledgeMaximum = currencyMaximum
                     .compose<Pair<Double, Double>>(combineLatestPair(selectedPledgeAmount))
-                    .map { it.first - it.second }
+                    .compose<Pair<Pair<Double, Double>, Reward>>(combineLatestPair(this.selectedReward))
+                    .map { if (RewardUtils.isNoReward(it.second)) it.first.first else it.first.first - it.first.second }
 
-            val pledgeMaximumIsGone = pledgeMaximum
+            val pledgeMaximumIsGone = currencyMaximum
                     .compose<Pair<Double, Double>>(combineLatestPair(total))
-                    .map { it.first > it.second }
+                    .map { it.first >= it.second }
                     .distinctUntilChanged()
 
             pledgeMaximumIsGone
@@ -896,8 +897,6 @@ interface PledgeFragmentViewModel {
                     }
 
             pledgeMaximum
-                    .compose<Pair<Double, Boolean>>(combineLatestPair(pledgeMaximumIsGone))
-                    .map { it.first }
                     .distinctUntilChanged()
                     .compose<Pair<Double, Project>>(combineLatestPair(project))
                     .map { this.ksCurrency.format(it.first, it.second, RoundingMode.HALF_UP) }
@@ -1418,7 +1417,7 @@ interface PledgeFragmentViewModel {
                                 this.isBonusSupportSectionGone.onNext(isNoReward) // has bonus, sections is not gone
                                 this.pledgeSectionIsGone.onNext(!isNoReward)
                                 this.headerSectionIsGone.onNext(true)
-                                this.pledgeSummaryIsGone.onNext(true) // Gone if No reward, Show if regular reward
+                                this.pledgeSummaryIsGone.onNext(isNoReward) // Gone if No reward, Show if regular reward
                             }
                             PledgeReason.UPDATE_PAYMENT,
                             PledgeReason.FIX_PLEDGE -> {
