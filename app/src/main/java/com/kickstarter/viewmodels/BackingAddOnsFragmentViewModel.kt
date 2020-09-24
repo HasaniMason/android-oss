@@ -322,10 +322,9 @@ class BackingAddOnsFragmentViewModel {
          *  backed one.
          *
          *  @param backedList -> addOns list from backing object
-         *  @return Boolean -> true in case different selection false otherwise
+         *  @return Boolean -> true in case different selection or new item selected false otherwise
          */
         private fun isDifferentSelection(backedList: List<Reward>): Boolean {
-            var isDifferentSelection = false
 
             val backedSelection: MutableMap<Long, Int> = mutableMapOf()
             backedList
@@ -333,16 +332,19 @@ class BackingAddOnsFragmentViewModel {
                         backedSelection.put(it.id(), it.quantity() ?: 0)
                     }
 
-            val keysSelected = this.currentSelection.keys.sorted()
-            val valuesSelected = this.currentSelection.values.sorted()
+            val isBackedItemList = this.currentSelection.map { item ->
+                if (backedSelection.containsKey(item.key)) backedSelection[item.key] == item.value
+                else false
+            }
 
-            val keysBaked = backedSelection.keys.sorted()
-            val valuesBacked = backedSelection.values.sorted()
-            
-            isDifferentSelection = if ( keysBaked != keysSelected ) true
-            else valuesBacked != valuesSelected
+            val isNewItemSelected = this.currentSelection.map { item ->
+                if (!backedSelection.containsKey(item.key)) item.value > 0
+                else false
+            }.any { it }
 
-            return isDifferentSelection
+            val sameSelection = isBackedItemList.filter { it }.size == backedSelection.size
+
+            return !sameSelection || isNewItemSelected
         }
 
         private fun isDifferentLocation(backedRule: ShippingRule, actualRule: ShippingRule) =
